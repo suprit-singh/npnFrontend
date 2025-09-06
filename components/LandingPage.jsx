@@ -36,8 +36,8 @@ export function LandingPage({ onGetStarted }) {
               <span className="text-2xl text-gray-900">RouteOptimizer</span>
             </div>
             <div className="flex items-center gap-4">
-              <button className="text-gray-600 hover:text-gray-900 transition-colors">About</button>
-              <button className="text-gray-600 hover:text-gray-900 transition-colors">Features</button>
+              <a href="#about"  className="text-gray-600 hover:text-gray-900 transition-colors">About</a>
+              <a href="#feautures" className="text-gray-600 hover:text-gray-900 transition-colors">Features</a>
               <button className="text-gray-600 hover:text-gray-900 transition-colors">Pricing</button>
               <button className="text-gray-600 hover:text-gray-900 transition-colors">Contact</button>
               <Button 
@@ -130,7 +130,8 @@ export function LandingPage({ onGetStarted }) {
       </section>
 
       {/* How It Works Section */}
-      <section className="container mx-auto px-4 py-20 bg-white/50 backdrop-blur-sm">
+      <section id="about"
+       className="container mx-auto px-4 py-20 bg-white/50 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-16">
             <h2 className="text-4xl text-gray-900 mb-4">How It Works</h2>
@@ -177,7 +178,8 @@ export function LandingPage({ onGetStarted }) {
       </section>
 
       {/* Benefits Section */}
-      <section className="container mx-auto px-4 py-20">
+      <section id="feautures" 
+      className="container mx-auto px-4 py-20">
         <div className="max-w-7xl mx-auto">
           <div className="text-center mb-16">
             <h2 className="text-4xl text-gray-900 mb-4">Why Choose RouteOptimizer?</h2>
@@ -239,80 +241,57 @@ export function LandingPage({ onGetStarted }) {
               Experience the power of intelligent route optimization
             </p>
           </div>
+
           <Card className="p-8 shadow-xl border-0 bg-white/80 backdrop-blur-sm">
-  <div className="bg-gradient-to-br from-blue-200 via-green-200 to-blue-300 rounded-lg h-96 flex items-center justify-center relative">
-    {/* Sample route with multiple stops */}
-    <div className="absolute inset-8 flex items-center justify-between w-[90%] mx-auto">
-      {/* Warehouse */}
-      <div className="flex flex-col items-center relative">
-        <div className="w-6 h-6 bg-green-500 rounded-full shadow-lg mb-2 z-10"></div>
-        <span className="text-sm text-white bg-black/20 px-2 py-1 rounded backdrop-blur-sm">
-          Warehouse
-        </span>
-      </div>
+            <div className="bg-gradient-to-br from-blue-200 via-green-200 to-blue-300 rounded-lg h-96 flex items-center justify-center relative">
+              {/* Sample route with multiple stops */}
+              <div className="absolute inset-8 flex items-center justify-between">
+                <div className="flex flex-col items-center">
+                  <div className="w-6 h-6 bg-green-500 rounded-full shadow-lg mb-2"></div>
+                  <span className="text-sm text-white bg-black/20 px-2 py-1 rounded backdrop-blur-sm">Warehouse</span>
+                </div>
+                <div className="flex flex-col items-center">
+                  <div className="w-4 h-4 bg-blue-500 rounded-full shadow-lg mb-2"></div>
+                  <span className="text-sm text-white bg-black/20 px-2 py-1 rounded backdrop-blur-sm">Stop 1</span>
+                </div>
+                <div className="flex flex-col items-center">
+                  <div className="w-4 h-4 bg-blue-500 rounded-full shadow-lg mb-2"></div>
+                  <span className="text-sm text-white bg-black/20 px-2 py-1 rounded backdrop-blur-sm">Stop 2</span>
+                </div>
+                <div className="flex flex-col items-center">
+                  <div className="w-4 h-4 bg-blue-500 rounded-full shadow-lg mb-2"></div>
+                  <span className="text-sm text-white bg-black/20 px-2 py-1 rounded backdrop-blur-sm">Stop 3</span>
+                </div>
+                <div className="flex flex-col items-center">
+                  <div className="w-6 h-6 bg-red-500 rounded-full shadow-lg mb-2"></div>
+                  <span className="text-sm text-white bg-black/20 px-2 py-1 rounded backdrop-blur-sm">Return</span>
+                </div>
+              </div>
 
-      {/* Stop 1 */}
-      <div className="flex flex-col items-center relative">
-        {/* connector line (left) */}
-        <div className="absolute top-1/2 left-[-50%] w-full border-t-2 border-dashed border-white/70 z-0 transform -translate-y-1/2"></div>
-        <div className="w-4 h-4 bg-blue-500 rounded-full shadow-lg mb-2 z-10"></div>
-        <span className="text-sm text-white bg-black/20 px-2 py-1 rounded backdrop-blur-sm">
-          Stop 1
-        </span>
-      </div>
+              {/* Route efficiency badge */}
+              <div className="absolute top-4 right-4 bg-white/90 backdrop-blur-sm rounded-lg p-4 shadow-lg">
+                <div className="flex items-center gap-2 mb-2">
+                  <TrendingUp className="h-5 w-5 text-green-600" />
+                  <span className="text-lg text-gray-900">Route Optimized!</span>
+                </div>
+                <div className="space-y-1 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Time Saved:</span>
+                    <span className="text-green-600">23 min</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Distance:</span>
+                    <span className="text-blue-600">-12.3 km</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Efficiency:</span>
+                    <span className="text-purple-600">91%</span>
+                  </div>
+                </div>
+              </div>
 
-      {/* Stop 2 */}
-      <div className="flex flex-col items-center relative">
-        <div className="absolute top-1/2 left-[-50%] w-full border-t-2 border-dashed border-white/70 z-0 transform -translate-y-1/2"></div>
-        <div className="w-4 h-4 bg-blue-500 rounded-full shadow-lg mb-2 z-10"></div>
-        <span className="text-sm text-white bg-black/20 px-2 py-1 rounded backdrop-blur-sm">
-          Stop 2
-        </span>
-      </div>
-
-      {/* Stop 3 */}
-      <div className="flex flex-col items-center relative">
-        <div className="absolute top-1/2 left-[-50%] w-full border-t-2 border-dashed border-white/70 z-0 transform -translate-y-1/2"></div>
-        <div className="w-4 h-4 bg-blue-500 rounded-full shadow-lg mb-2 z-10"></div>
-        <span className="text-sm text-white bg-black/20 px-2 py-1 rounded backdrop-blur-sm">
-          Stop 3
-        </span>
-      </div>
-
-      {/* Return */}
-      <div className="flex flex-col items-center relative">
-        <div className="absolute top-1/2 left-[-50%] w-full border-t-2 border-dashed border-white/70 z-0 transform -translate-y-1/2"></div>
-        <div className="w-6 h-6 bg-red-500 rounded-full shadow-lg mb-2 z-10"></div>
-        <span className="text-sm text-white bg-black/20 px-2 py-1 rounded backdrop-blur-sm">
-          Return
-        </span>
-      </div>
-    </div>
-
-    {/* Route efficiency badge */}
-    <div className="absolute top-4 right-4 bg-white/90 backdrop-blur-sm rounded-lg p-4 shadow-lg">
-      <div className="flex items-center gap-2 mb-2">
-        <TrendingUp className="h-5 w-5 text-green-600" />
-        <span className="text-lg text-gray-900">Route Optimized!</span>
-      </div>
-      <div className="space-y-1 text-sm">
-        <div className="flex justify-between">
-          <span className="text-gray-600">Time Saved:</span>
-          <span className="text-green-600">23 min</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-gray-600">Distance:</span>
-          <span className="text-blue-600">-12.3 km</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-gray-600">Efficiency:</span>
-          <span className="text-purple-600">91%</span>
-        </div>
-      </div>
-    </div>
-  </div>
-
-          
+              
+            </div>
             
             <div className="text-center mt-8">
               <Button 
@@ -404,7 +383,7 @@ export function LandingPage({ onGetStarted }) {
             
             <div className="border-t border-gray-200 mt-8 pt-8 text-center">
               <p className="text-gray-600">
-                © 2024 RouteOptimizer. All rights reserved.
+                © 2025 RouteOptimizer. All rights reserved.
               </p>
             </div>
           </div>

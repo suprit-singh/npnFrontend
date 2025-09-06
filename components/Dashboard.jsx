@@ -173,7 +173,7 @@ function VrpDashboard({ trip_id, initialData = null, onShowMap }) {
 
                 const token = sessionStorage.getItem("token");
                 console.log(`I am ${trip_id}`);
-                const res = await fetch(`http://10.53.178.199:5000/api/routes/${trip_id}`, {
+                const res = await fetch(`http://127.0.0.1:5000/api/routes/${trip_id}`, {
                     headers: { Authorization: `Bearer ${token}` },
                 });
 
@@ -833,7 +833,7 @@ async function fetchRecommendationForType({ type, tripId, payload, timeoutMs = 1
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const res = await fetch(`http://10.53.178.199:5000${path}`, {
+    const res = await fetch(`http://127.0.0.1:5000${path}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

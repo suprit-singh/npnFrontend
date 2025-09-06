@@ -29,7 +29,7 @@ export function RouteInput({ user, onLogout, onSolveRoute, onViewDashboard }) {
     setToast({ type: "info", message: "Optimizing..." });
     try {
       const token = sessionStorage.getItem("token");
-      const res = await fetch("http://10.53.178.199:5000/api/solve", {
+      const res = await fetch("http://127.0.0.1:5000/api/solve", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -62,7 +62,7 @@ export function RouteInput({ user, onLogout, onSolveRoute, onViewDashboard }) {
     setToast({ type: "info", message: "Syncing pending orders..." });
     try {
       const token = sessionStorage.getItem("token");
-      const res = await fetch("http://10.53.178.199:5000/api/orders/to-nodes", {
+      const res = await fetch("http://127.0.0.1:5000/api/orders/to-nodes", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -83,7 +83,7 @@ export function RouteInput({ user, onLogout, onSolveRoute, onViewDashboard }) {
     setToast({ type: "info", message: "Fetching trip IDs..." });
     try {
       const token = sessionStorage.getItem("token");
-      const res = await fetch("http://10.53.178.199:5000/api/routes/trip-ids", {
+      const res = await fetch("http://127.0.0.1:5000/api/routes/trip-ids", {
         method: "GET",
         headers: {
           "Content-Type": "application/json",

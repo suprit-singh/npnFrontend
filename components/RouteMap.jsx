@@ -183,7 +183,7 @@ export default function RouteMap({ routes: propRoutes, depot: propDepot }) {
     const fetchRoutes = async () => {
       setLoading(true);
       try {
-        const res = await fetch("http://10.53.178.199:5000/api/routes/latest");
+        const res = await fetch("http://127.0.0.1:5000/api/routes/latest");
         const json = await res.json();
         if (json && json.route) {
           setDepot(json.route.depot || null);
