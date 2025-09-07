@@ -284,24 +284,38 @@ function VrpDashboard({ trip_id, initialData = null, onShowMap }) {
                 return a + (Number(s?.nearby_repair_shops) || 0);
             }, 0);
 
+            // compute derived operational metrics requested by user
+            const dist = Number(r.total_distance_km) || 0;
+            const fuel = Number(r?.metrics?.fuel_used_l) || 0;
+            const fuelPerKm = dist > 0 ? Number((fuel / dist).toFixed(4)) : null;
+
+            const stopsCount = (r?.sequence ?? []).filter((s) => s?.id && s.id !== depot?.id).length;
+            const durationSecs = trafficSecs || normalSecs || 0;
+            const durationHours = durationSecs > 0 ? durationSecs / 3600 : null;
+            const workloadIndex = durationHours && stopsCount > 0 ? Math.round((stopsCount / durationHours) * 10) : null;
+
             return {
                 idx: i,
                 vehicle: r.vehicle ?? `V${i + 1}`,
-                distance_km: Number(r.total_distance_km) || 0,
-                fuel_l: Number(r?.metrics?.fuel_used_l) || 0,
+                distance_km: dist,
+                fuel_l: fuel,
                 fuel_cost: Number(r?.metrics?.fuel_cost) || 0,
                 eco_score: r?.metrics?.eco_score ?? null,
                 eco_score_num: ecoScoreNumeric(r?.metrics?.eco_score),
                 normal_secs: normalSecs,
                 traffic_secs: trafficSecs,
                 delay_pct: delayPct,
-                stops: (r?.sequence ?? []).filter((s) => s?.id && s.id !== depot?.id).length,
+                stops: stopsCount,
                 traffic_level: r?.metrics?.traffic_level ?? "",
                 road_condition: r?.metrics?.road_condition ?? "",
                 notes: r?.metrics?.notes ?? "",
                 sequence: seq,
                 fuelStations,
                 repairShops,
+                metrics: r?.metrics ?? {},
+                // new fields
+                fuelPerKm,
+                workloadIndex,
             };
         });
 
@@ -330,8 +344,254 @@ function VrpDashboard({ trip_id, initialData = null, onShowMap }) {
         const avgStopsPerRoute = routes.length ? totalStops / routes.length : 0;
 
         const filtered = vehicleFilter ? routes.filter((x) => String(x.vehicle).toLowerCase().includes(vehicleFilter.toLowerCase())) : routes;
-        return { routes, totalDistance, totalFuel, totalCost, totalFuelStations, totalRepairShops, onTimePct, maxDelay, avgStopsPerRoute, filtered };
+        return {
+            routes,
+            totalDistance,
+            totalFuel,
+            totalCost,
+            totalFuelStations,
+            totalRepairShops,
+            onTimePct,
+            maxDelay,
+            avgStopsPerRoute,
+            filtered,
+            // expose avgEcoScore so UI can surface it
+            avgEcoScore,
+        };
     }, [refined, depot, vehicleFilter]);
+
+    // ---------- Amenity / fuel/repair derived metrics (non-invasive) ----------
+    const amenityKpis = useMemo(() => {
+        // haversine (km)
+        const haversineKm = (aLat, aLon, bLat, bLon) => {
+            const R = 6371;
+            const toRad = (d) => (d * Math.PI) / 180;
+            const dLat = toRad(bLat - aLat);
+            const dLon = toRad(bLon - aLon);
+            const lat1 = toRad(aLat);
+            const lat2 = toRad(bLat);
+            const sinDLat = Math.sin(dLat / 2);
+            const sinDLon = Math.sin(dLon / 2);
+            const a = sinDLat * sinDLat + Math.cos(lat1) * Math.cos(lat2) * sinDLon * sinDLon;
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        };
+
+        // assumed driving speed for ETA calculations (km/h)
+        const ASSUMED_SPEED_KMPH = 50;
+        const AVG_COST_PER_KM = 0.8; // £ per km for contingency estimate
+        const HOURLY_DELAY_COST = 30; // £ per hour delay cost estimate
+
+        const routeMetrics = (route) => {
+            const seq = route.sequence || [];
+            const fuelDists = []; // distances from stop -> nearest petrol
+            const repairDists = [];
+            const stationSet = new Set();
+            const repairSet = new Set();
+
+            // For finding next station candidate (nearest overall to route position)
+            let bestStation = null;
+            let bestStationDist = Infinity;
+
+            for (const stop of seq) {
+                if (!stop || typeof stop.lat !== "number" || typeof stop.lon !== "number") continue;
+
+                // petrol
+                if (Array.isArray(stop.nearby_petrol_stations) && stop.nearby_petrol_stations.length) {
+                    let nearest = Infinity;
+                    for (const s of stop.nearby_petrol_stations) {
+                        if (s && typeof s.lat === "number" && typeof s.lon === "number") {
+                            const d = haversineKm(stop.lat, stop.lon, s.lat, s.lon);
+                            if (d < nearest) nearest = d;
+                            stationSet.add(`${s.lat}:${s.lon}`);
+                            // consider as global candidate
+                            if (d < bestStationDist) {
+                                bestStationDist = d;
+                                bestStation = { lat: s.lat, lon: s.lon, name: s.name ?? s.id ?? "station" };
+                            }
+                        }
+                    }
+                    if (nearest !== Infinity) fuelDists.push(nearest);
+                }
+
+                // repair
+                if (Array.isArray(stop.nearby_repair_shops) && stop.nearby_repair_shops.length) {
+                    let nearestR = Infinity;
+                    for (const r of stop.nearby_repair_shops) {
+                        if (r && typeof r.lat === "number" && typeof r.lon === "number") {
+                            const d = haversineKm(stop.lat, stop.lon, r.lat, r.lon);
+                            if (d < nearestR) nearestR = d;
+                            repairSet.add(`${r.lat}:${r.lon}`);
+                        }
+                    }
+                    if (nearestR !== Infinity) repairDists.push(nearestR);
+                }
+            }
+
+            const median = (arr) => {
+                if (!arr.length) return null;
+                const a = [...arr].sort((x, y) => x - y);
+                const m = Math.floor(a.length / 2);
+                return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+            };
+            const pctWithin = (arr, km) => (arr.length ? (arr.filter((d) => d <= km).length / arr.length) * 100 : 0);
+
+            const medFuel = median(fuelDists);
+            const maxFuel = fuelDists.length ? Math.max(...fuelDists) : null;
+            const medRepair = median(repairDists);
+            const maxRepair = repairDists.length ? Math.max(...repairDists) : null;
+
+            // consumption L/km (use route.fuel_l / distance_km when available)
+            const consumption = route.distance_km > 0 ? (route.fuel_l / route.distance_km) : null;
+            // fuel remaining if provided; fallback to null
+            const fuelRemaining = Number(route.metrics?.fuel_remaining_l ?? route.metrics?.remaining_fuel_l ?? NaN);
+            const fuelCapacity = Number(route.metrics?.fuel_capacity_l ?? NaN);
+
+            // estimate remaining range if possible
+            let estimatedKmRemaining = null;
+            if (!isNaN(fuelRemaining) && consumption && consumption > 0) {
+                estimatedKmRemaining = fuelRemaining / consumption;
+            } else if (!isNaN(fuelCapacity) && !isNaN(route.fuel_l) && consumption && consumption > 0) {
+                // assume fuel_l is used so far, capacity available
+                const rem = fuelCapacity - route.fuel_l;
+                if (rem > 0) estimatedKmRemaining = rem / consumption;
+            } else {
+                // can't estimate reliably
+                estimatedKmRemaining = null;
+            }
+
+            // simple heuristic fuelRisk (0 = low risk, 100 = high risk)
+            // factors: median fuel distance (larger -> higher risk), fuel_used (higher -> higher risk), pct stops within 1km (lower -> higher risk), estimated remaining range (lower -> higher risk)
+            const fuelUsed = Number(route.fuel_l || 0);
+            const pctWithin1 = pctWithin(fuelDists, 1);
+            let risk = 0;
+            if (medFuel != null) risk += Math.min(50, medFuel * 10); // medFuel 0 => 0, 5km => 50
+            risk += Math.min(25, fuelUsed * 8); // weight fuel used
+            if (pctWithin1 < 50) risk += 15;
+            if (estimatedKmRemaining != null) {
+                if (estimatedKmRemaining < 20) risk += 20;
+                else if (estimatedKmRemaining < 50) risk += 10;
+            } else {
+                // uncertainty penalty
+                risk += 5;
+            }
+            risk = Math.round(Math.max(0, Math.min(100, risk)));
+
+            // Refuel urgency: use bestStationDist and estimatedKmRemaining to create ETA and a label
+            let nextStation = null;
+            let nextStationEtaMin = null;
+            if (bestStation && bestStationDist !== Infinity) {
+                nextStation = { ...bestStation, distance_km: Number(bestStationDist.toFixed(2)) };
+                if (estimatedKmRemaining != null && consumption && consumption > 0) {
+                    // detour cost is approximated by bestStationDist (distance from stop) -> use assumed speed
+                    nextStationEtaMin = Math.round((bestStationDist / ASSUMED_SPEED_KMPH) * 60);
+                } else {
+                    nextStationEtaMin = Math.round((bestStationDist / ASSUMED_SPEED_KMPH) * 60);
+                }
+            }
+
+            // Repair coverage: percent of stops with a repair within 10km, redundancy (# unique repair shops within 10km measured across stops)
+            const stopsWithRepair10 = repairDists.filter((d) => d <= 10).length;
+            const repairCoveragePct = seq.length ? Math.round((stopsWithRepair10 / seq.length) * 100) : 0;
+            const redundancyWithin10km = (() => {
+                return repairSet.size || 0;
+            })();
+
+            // data confidence / freshness
+            const stationCount = stationSet.size;
+            const repairCount = repairSet.size;
+            const dataConfidence = {
+                petrol: stationCount >= 4 ? "rich" : stationCount >= 2 ? "ok" : "sparse",
+                repairs: repairCount >= 4 ? "rich" : repairCount >= 2 ? "ok" : "sparse",
+            };
+
+            // per-stop contingency cost: estimate based on distance to depot (if depot present) or median repair distance
+            let perStopContingencyEstimate = null;
+            if (depot && typeof depot.lat === "number" && typeof depot.lon === "number") {
+                // estimate average distance from stops to depot
+                const depotDists = [];
+                for (const stop of seq) {
+                    if (!stop || typeof stop.lat !== "number" || typeof stop.lon !== "number") continue;
+                    depotDists.push(haversineKm(stop.lat, stop.lon, depot.lat, depot.lon));
+                }
+                const avgDepotDist = depotDists.length ? depotDists.reduce((a, b) => a + b, 0) / depotDists.length : null;
+                if (avgDepotDist != null) {
+                    const hours = avgDepotDist / ASSUMED_SPEED_KMPH;
+                    perStopContingencyEstimate = Math.round((avgDepotDist * AVG_COST_PER_KM + hours * HOURLY_DELAY_COST) * 100) / 100;
+                }
+            } else if (medRepair != null) {
+                const hours = medRepair / ASSUMED_SPEED_KMPH;
+                perStopContingencyEstimate = Math.round((medRepair * AVG_COST_PER_KM + hours * HOURLY_DELAY_COST) * 100) / 100;
+            } else {
+                perStopContingencyEstimate = null;
+            }
+
+            // aggregate operational ratios
+            const fuelPerKm = route.distance_km > 0 ? Number((route.fuel_l / route.distance_km).toFixed(4)) : null;
+            const costPerKm = route.distance_km > 0 ? Number((route.fuel_cost / route.distance_km).toFixed(4)) : null;
+            const costPerStop = route.stops > 0 ? Number((route.fuel_cost / (route.stops || 1)).toFixed(2)) : null;
+            // stops per hour using normal_secs if available else estimate from distance
+            const totalHours = route.normal_secs ? route.normal_secs / 3600 : (route.distance_km / 40); // fallback average speed 40km/h
+            const stopsPerHour = totalHours > 0 ? Number((route.stops / totalHours).toFixed(2)) : null;
+
+            // driver workload index: heuristic combining stopsPerHour, totalHours and stops
+            let workloadIndex = null;
+            if (stopsPerHour != null && totalHours != null) {
+                const s = Math.min(50, stopsPerHour * 5); // normalize
+                const t = Math.min(30, totalHours * 2); // normalize
+                const st = Math.min(20, route.stops * 0.5);
+                workloadIndex = Math.round(Math.min(100, s + t + st));
+            }
+
+            return {
+                vehicle: route.vehicle,
+                medianFuelKm: medFuel != null ? Number(medFuel.toFixed(2)) : null,
+                maxFuelKm: maxFuel != null ? Number(maxFuel.toFixed(2)) : null,
+                pctStopsWithin1kmFuel: Math.round(pctWithin(fuelDists, 1)),
+                pctStopsWithin3kmFuel: Math.round(pctWithin(fuelDists, 3)),
+                medianRepairKm: medRepair != null ? Number(medRepair.toFixed(2)) : null,
+                maxRepairKm: maxRepair != null ? Number(maxRepair.toFixed(2)) : null,
+                stationCount,
+                repairCount,
+                fuelUsedL: Math.round((route.fuel_l || 0) * 100) / 100,
+                fuelRiskScore: risk,
+                dataConfidence,
+                nextStation,
+                nextStationEtaMin,
+                repairCoveragePct,
+                redundancyWithin10km,
+                perStopContingencyEstimate,
+                fuelPerKm,
+                costPerKm,
+                costPerStop,
+                stopsPerHour,
+                workloadIndex,
+            };
+        };
+
+        const all = (refined || []).map(routeMetrics);
+
+        // aggregated summary across all routes (median of medians, avg risk)
+        const medians = all.map((r) => r.medianFuelKm).filter((v) => v != null);
+        const aggMedianFuelKm = medians.length ? medians.reduce((a, b) => a + b, 0) / medians.length : null;
+        const avgRisk = all.length ? Math.round(all.reduce((a, b) => a + (b.fuelRiskScore || 0), 0) / all.length) : 0;
+        const totalStations = all.reduce((s, r) => s + (r.stationCount || 0), 0);
+        const totalRepairs = all.reduce((s, r) => s + (r.repairCount || 0), 0);
+
+        // coarse overall confidence
+        const overallConfidence = {
+            petrol: totalStations >= 4 ? "rich" : totalStations >= 2 ? "ok" : "sparse",
+            repairs: totalRepairs >= 4 ? "rich" : totalRepairs >= 2 ? "ok" : "sparse",
+        };
+
+        return {
+            perRoute: all,
+            aggMedianFuelKm: aggMedianFuelKm != null ? Number(aggMedianFuelKm.toFixed(2)) : null,
+            avgFuelRiskScore: avgRisk,
+            totalStations,
+            totalRepairs,
+            overallConfidence,
+        };
+    }, [refined, depot]);
 
     const activeVsIdleData = useMemo(
         () => [{ name: "Active", value: baseKpis.activeVehicles }, { name: "Idle", value: baseKpis.idleVehicles }],
@@ -390,7 +650,7 @@ function VrpDashboard({ trip_id, initialData = null, onShowMap }) {
         return <div className="p-6 text-center text-gray-600">No route data available</div>;
     }
 
-    /* ===================== Main JSX (unchanged) ===================== */
+    /* ===================== Main JSX (modified to surface the requested metrics) ===================== */
     return (
         <div className="w-full p-4 md:p-6 space-y-6" style={{ background: theme.bg }}>
             {/* Header */}
@@ -423,8 +683,52 @@ function VrpDashboard({ trip_id, initialData = null, onShowMap }) {
                         <div className="text-sm" style={{ color: theme.textMuted }}>Lat: {depot?.lat}, Lon: {depot?.lon}</div>
                         <div className="ml-auto flex items-center gap-3 text-sm" style={{ color: theme.text }}>
                             <span className="flex items-center gap-1"><Truck className="w-4 h-4" /> OR-Tools Vehicles: <strong>{baseKpis.totalVehicles}</strong></span>
-                            <span className="flex items-center gap-1"><FuelIcon className="w-4 h-4" /> Fuel Stations: <strong>{genaiKpis.totalFuelStations}</strong></span>
-                            <span className="flex items-center gap-1"><Wrench className="w-4 h-4" /> Repair Shops: <strong>{genaiKpis.totalRepairShops}</strong></span>
+                            
+
+                            {/* ADDED: aggregated amenity metrics (non-invasive) */}
+                            {amenityKpis?.aggMedianFuelKm != null && (
+                                <span className="flex items-center gap-1 text-xs" style={{ color: theme.textMuted }}>
+                                    • Median fuel dist: <strong style={{ color: theme.text }}>{amenityKpis.aggMedianFuelKm} km</strong>
+                                </span>
+                            )}
+                            <span className="flex items-center gap-1 text-xs" style={{ color: theme.textMuted }}>
+                                • Fuel risk:{" "}
+                                <Badge
+                                    style={{
+                                        background:
+                                            (amenityKpis?.avgFuelRiskScore ?? 0) > 65
+                                                ? theme.chart.red500
+                                                : (amenityKpis?.avgFuelRiskScore ?? 0) > 35
+                                                    ? theme.chart.amber500
+                                                    : theme.chart.green500,
+                                        color: "#fff",
+                                        padding: "0 6px",
+                                        fontSize: "11px",
+                                    }}
+                                >
+                                    {amenityKpis?.avgFuelRiskScore ?? "—"}
+                                </Badge>
+                            </span>
+
+                            <span className="flex items-center gap-1 text-xs" style={{ color: theme.textMuted }}>
+                                • Station data:{" "}
+                                <Badge
+                                    variant="secondary"
+                                    style={{
+                                        background:
+                                            amenityKpis?.overallConfidence?.petrol === "sparse"
+                                                ? theme.chart.red500
+                                                : amenityKpis?.overallConfidence?.petrol === "ok"
+                                                    ? theme.chart.amber500
+                                                    : theme.chart.green500,
+                                        color: "#fff",
+                                        padding: "0 6px",
+                                        fontSize: "11px",
+                                    }}
+                                >
+                                    {amenityKpis?.overallConfidence?.petrol ?? "unknown"}
+                                </Badge>
+                            </span>
                         </div>
                     </div>
                 </CardContent>
@@ -440,7 +744,7 @@ function VrpDashboard({ trip_id, initialData = null, onShowMap }) {
                     </TabsTrigger>
                 </TabsList>
 
-                {/* BASE and GENAI content (unchanged from your original component) */}
+                {/* BASE content */}
                 <TabsContent value="base" className="space-y-6">
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                         <KpiCard icon={<Truck />} label="Active Vehicles" value={baseKpis.activeVehicles} sub={`${baseKpis.totalVehicles} total`} />
@@ -520,12 +824,14 @@ function VrpDashboard({ trip_id, initialData = null, onShowMap }) {
                     </Card>
                 </TabsContent>
 
+                {/* GENAI content with new amenity & risk UI */}
                 <TabsContent value="genai" className="space-y-6">
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                        {/* show avg eco as a KPI (we now use avgEcoScore from genaiKpis) */}
+                        <KpiCard icon={<Activity />} label="Avg Eco" value={genaiKpis.avgEcoScore ? genaiKpis.avgEcoScore.toUpperCase() : "N/A"} sub="Aggregated eco score" />
                         <KpiCard icon={<Gauge />} label="Total Distance" value={`${genaiKpis.totalDistance.toFixed(3)} km`} sub="Sum across routes" />
                         <KpiCard icon={<Fuel />} label="Fuel Used" value={`${genaiKpis.totalFuel.toFixed(2)} L`} sub="From metrics" />
                         <KpiCard icon={<Fuel />} label="Fuel Cost" value={`£${genaiKpis.totalCost.toFixed(2)}`} sub="From metrics" />
-                        <KpiCard icon={<Activity />} label="On-Time %" value={`${genaiKpis.onTimePct.toFixed(0)}%`} sub="<=10% delay" />
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -534,6 +840,104 @@ function VrpDashboard({ trip_id, initialData = null, onShowMap }) {
                         <KpiCard icon={<Clock3 />} label="Avg Stops / Route" value={genaiKpis.avgStopsPerRoute.toFixed(1)} sub="Excluding depot" />
                     </div>
 
+                    {/* NEW: Amenity & Risk Summary */}
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                        <Card className="rounded-2xl" tone="muted">
+                            <CardContent className="p-4 md:p-6 space-y-3">
+                                <h3 className="font-semibold" style={{ color: theme.text }}>Amenity & Risk — Summary</h3>
+                                <div className="text-sm" style={{ color: theme.textMuted }}>
+                                    <div>Median distance to fuel (agg): <strong style={{ color: theme.text }}>{amenityKpis.aggMedianFuelKm ?? "—"} km</strong></div>
+                                    <div className="mt-2">Avg fuel risk:{" "}
+                                        <Badge style={{
+                                            background: (amenityKpis.avgFuelRiskScore ?? 0) > 65 ? theme.chart.red500 : (amenityKpis.avgFuelRiskScore ?? 0) > 35 ? theme.chart.amber500 : theme.chart.green500,
+                                            color: "#fff",
+                                            padding: "0 6px",
+                                            fontSize: "11px",
+                                        }}>
+                                            {amenityKpis.avgFuelRiskScore ?? "—"}
+                                        </Badge>
+                                    </div>
+                                    <div className="mt-2">Station data: <strong style={{ color: theme.text }}>{amenityKpis.totalStations}</strong>, Repair data: <strong style={{ color: theme.text }}>{amenityKpis.totalRepairs}</strong></div>
+                                    <div className="mt-2 text-xs" style={{ color: theme.textMuted }}>
+                                        Note: counts alone can be misleading — we show median/max distances, % within thresholds, and data confidence.
+                                    </div>
+                                </div>
+                            </CardContent>
+                        </Card>
+
+                        <Card className="rounded-2xl" tone="muted">
+                            <CardContent className="p-4 md:p-6 space-y-3">
+                                <h3 className="font-semibold" style={{ color: theme.text }}>Repair Coverage & Redundancy</h3>
+                                <div className="text-sm" style={{ color: theme.textMuted }}>
+                                    <div>Overall repair coverage: <strong style={{ color: theme.text }}>{amenityKpis.totalRepairs}</strong></div>
+                                    <div className="mt-2">Confidence: <strong style={{ color: theme.text }}>{amenityKpis.overallConfidence.repairs}</strong></div>
+                                    <div className="mt-2 text-xs" style={{ color: theme.textMuted }}>
+                                        Repair Coverage Index = % stops within 10km of a repair shop (per-route shown below). Low values → high tow risk.
+                                    </div>
+                                </div>
+                            </CardContent>
+                        </Card>
+
+                        <Card className="rounded-2xl">
+                            <CardContent className="p-4 md:p-6 space-y-3">
+                                <h3 className="font-semibold" style={{ color: theme.text }}>Operational Ratios</h3>
+                                <div className="text-sm" style={{ color: theme.textMuted }}>
+                                    <div>Fleet fuel / km (approx): <strong style={{ color: theme.text }}>{(genaiKpis.totalDistance > 0 ? (genaiKpis.totalFuel / genaiKpis.totalDistance).toFixed(4) : "—")} L/km</strong></div>
+                                    <div className="mt-2">Avg cost / km: <strong style={{ color: theme.text }}>{(genaiKpis.totalDistance > 0 ? (genaiKpis.totalCost / genaiKpis.totalDistance).toFixed(4) : "—")} £/km</strong></div>
+                                    <div className="mt-2 text-xs" style={{ color: theme.textMuted }}>
+                                        These normalized metrics are more actionable than raw counts when deciding route reassignments or refuel priorities.
+                                    </div>
+                                </div>
+                            </CardContent>
+                        </Card>
+                    </div>
+
+                    {/* NEW: Per-route amenity table (median/max, % within 1/3km, fuel risk, next station ETA, redundancy, workload) */}
+                    <Card className="rounded-2xl">
+                        <CardContent className="p-0 overflow-x-auto">
+                            <table className="min-w-full text-sm">
+                                <thead style={{ background: theme.surfaceMuted }}>
+                                    <tr>
+                                        <Th>Vehicle</Th>
+                                        <Th>Median fuel (km)</Th>
+                                        <Th>Max repair (km)</Th>
+                                        <Th>% stops ≤1km fuel</Th>
+                                        <Th>Fuel risk</Th>
+                                        <Th>Repair cov. %</Th>
+                                        <Th>Repair redundancy</Th>
+                                        <Th>Contingency £/stop</Th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {amenityKpis.perRoute.map((r) => (
+                                        <tr key={r.vehicle} style={{ borderBottom: `1px solid ${theme.border}` }}>
+                                            <Td>{r.vehicle}</Td>
+                                            <Td>{r.medianFuelKm != null ? `${r.medianFuelKm}` : "—"}</Td>
+                                            <Td>{r.maxRepairKm != null ? `${r.maxRepairKm}` : "—"}</Td>
+                                            <Td>{typeof r.pctStopsWithin1kmFuel === "number" ? `${r.pctStopsWithin1kmFuel}%` : "—"}</Td>
+                                            <Td>
+                                                <Badge style={{
+                                                    background: r.fuelRiskScore > 65 ? theme.chart.red500 : r.fuelRiskScore > 35 ? theme.chart.amber500 : theme.chart.green500,
+                                                    color: "#fff",
+                                                    padding: "0 8px",
+                                                    fontSize: "11px",
+                                                }}>
+                                                    {r.fuelRiskScore}
+                                                </Badge>
+                                            </Td>
+                    
+                                            <Td>{typeof r.repairCoveragePct === "number" ? `${r.repairCoveragePct}%` : "—"}</Td>
+                                            <Td>{r.redundancyWithin10km != null ? r.redundancyWithin10km : "—"}</Td>
+                                            <Td>{r.perStopContingencyEstimate != null ? `£${r.perStopContingencyEstimate}` : "—"}</Td>
+            
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </CardContent>
+                    </Card>
+
+                    {/* keep the other genai visuals */}
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                         <Card className="rounded-2xl" tone="muted">
                             <CardContent className="p-4 md:p-6 space-y-3">
@@ -674,6 +1078,8 @@ function VrpDashboard({ trip_id, initialData = null, onShowMap }) {
                                         <Th>Fuel Stations</Th>
                                         <Th>Repair Shops</Th>
                                         <Th>Notes</Th>
+                                        <Th>Fuel L/km</Th>
+                                        <Th>Workload</Th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -691,6 +1097,8 @@ function VrpDashboard({ trip_id, initialData = null, onShowMap }) {
                                             <Td>{r.fuelStations}</Td>
                                             <Td>{r.repairShops}</Td>
                                             <Td className="max-w-[280px] truncate" title={r.notes}>{r.notes}</Td>
+                                            <Td>{r.fuelPerKm != null ? r.fuelPerKm.toFixed ? r.fuelPerKm.toFixed(4) : r.fuelPerKm : "—"}</Td>
+                                            <Td>{r.workloadIndex != null ? `${r.workloadIndex}` : "—"}</Td>
                                         </tr>
                                     ))}
                                 </tbody>
@@ -739,10 +1147,6 @@ function VrpDashboard({ trip_id, initialData = null, onShowMap }) {
                     </div>
 
 
-                    <div className="text-xs" style={{ color: theme.textMuted }}>
-                        API contract suggestion:
-                        <pre className="p-3 rounded-lg overflow-x-auto text-[11px] mt-2" style={{ background: theme.surfaceMuted, border: `1px solid ${theme.border}` }}>{returnJsonTemplate}</pre>
-                    </div>
                 </CardContent>
             </Card>
 
