@@ -791,6 +791,34 @@ function VrpDashboard({ trip_id, initialData = null, onShowMap }) {
                             </CardContent>
                         </Card>
                     </div>
+                    {/* Baseline OR-Tools Route */}
+                    <Card className="rounded-2xl" tone="muted">
+                    <CardContent className="p-4 md:p-6 space-y-4">
+                        <div className="flex items-center gap-2">
+                        <Truck className="w-4 h-4" />
+                        <h3 className="font-semibold" style={{ color: theme.text }}>Baseline OR-Tools Route – Flowchart</h3>
+                        </div>
+
+                        <div className="space-y-4">
+                        {(ortools || []).map((o) => {
+                            const seq = o.route || []; // adapt if your OR-Tools stops live under another prop
+                            const vehicleId = o.vehicle_id ?? o.vehicle ?? `V${o.id ?? "?"}`;
+                            return (
+                            <div key={vehicleId} className="border rounded-xl p-3" style={{ borderColor: theme.border, background: theme.surface }}>
+                                <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center gap-2 text-sm" style={{ color: theme.text }}>
+                                    <Truck className="w-4 h-4" /> <span className="font-medium">{vehicleId}</span>
+                                </div>
+                                <Badge variant="secondary">{seq.length} hops</Badge>
+                                </div>
+                                <HorizontalFlow items={(seq || []).map((s) => (s?.id ?? s?.stop_id ?? s ?? "?"))} />
+                            </div>
+                            );
+                        })}
+                        </div>
+                    </CardContent>
+                    </Card>
+
 
                     <Card className="rounded-2xl">
                         <CardContent className="p-0 overflow-x-auto">
@@ -1110,7 +1138,11 @@ function VrpDashboard({ trip_id, initialData = null, onShowMap }) {
 
             {/* Route flowchart */}
             <Card className="rounded-2xl" tone="muted">
+                
                 <CardContent className="p-4 md:p-6 space-y-4">
+                    <h2 className="text-xl font-semibold tracking-tight" style={{ color: theme.text }}>
+                        Your Routes For This Trip
+                    </h2>
                     <div className="flex items-center gap-2">
                         <Workflow className="w-4 h-4" />
                         <h3 className="font-semibold" style={{ color: theme.text }}>Route per Vehicle – Flowchart</h3>
